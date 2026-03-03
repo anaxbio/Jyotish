@@ -35,4 +35,70 @@ def draw_north_indian_chart(house_data, lagna_rashi):
         # Place Rashi Number
         ax.text(centers[i][0], centers[i][1]-30, str(r_num), color='red', fontsize=12, ha='center')
         # Place Planets
-        p_list = "\n".join(house_data
+        p_list = "\n".join(house_data[i])
+        ax.text(centers[i][0], centers[i][1], p_list, fontsize=10, ha='center', va='center', fontweight='bold')
+    
+    return fig
+
+# --- Sidebar Inputs ---
+with st.sidebar:
+    st.header("📍 Birth Details")
+    # Calendar set to 1900-2100 to fix your year issue
+    dob = st.date_input("Date of Birth", 
+                        value=datetime(1990, 1, 1),
+                        min_value=datetime(1900, 1, 1), 
+                        max_value=datetime(2100, 12, 31))
+    tob = st.time_input("Time of Birth", step=60)
+    city = st.text_input("City", "Mumbai, India")
+    ayan = st.selectbox("Ayanamsa", list(AYANAMSA_MAP.keys()))
+
+# --- Main Logic ---
+if st.button("Generate Accurate Patrika"):
+    try:
+        # 1. Location & Time
+        location = geolocator.geocode(city)
+        lat, lon = (location.latitude, location.longitude) if location else (19.0760, 72.8777)
+        
+        # Convert to UTC (Assuming IST 5.5)
+        utc_dt = datetime.combine(dob, tob) - timedelta(hours=5, minutes=30)
+        
+        # Calculate Julian Day
+        jd = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, 
+                        utc_dt.hour + utc_dt.minute/60.0 + utc_dt.second/3600.0)
+        
+        # 2. Set Calculation Flags (FIXED LINE)
+        swe.set_sid_mode(AYANAMSA_MAP[ayan])
+        calc_flags = swe.FLG_SWIEPH | swe.FLG_SIDEREAL
+        
+        # 3. Calculate Lagna (Ascendant)
+        cusps, ascmc = swe.houses_ex(jd, lat, lon, b'W', calc_flags)
+        lagna_lon = ascmc[0]
+        lagna_rashi = int(lagna_lon / 30) + 1
+        
+        # 4. Calculate Planets & Assign to Houses
+        house_data = [[] for _ in range(12)]
+        planet_results = []
+        
+        for p_name, p_id in PLANETS_MAP.items():
+            res = swe.calc_ut(jd, p_id, calc_flags)
+            lon_p = res[0][0]
+            p_rashi = int(lon_p / 30) + 1
+            # Determine house index relative to Lagna (0-11)
+            h_idx = (p_rashi - lagna_rashi) % 12
+            house_data[h_idx].append(p_name[:2])
+            planet_results.append({"Planet": p_name, "Rashi": p_rashi, "Degree": f"{lon_p%30:.2f}°"})
+
+        # 5. UI Layout
+        st.success(f"Generated Patrika for {city}")
+        col1, col2 = st.columns([1.2, 0.8])
+        
+        with col1:
+            st.subheader("🗺️ North Indian Lagna Chart (D1)")
+            st.pyplot(draw_north_indian_chart(house_data, lagna_rashi))
+            
+        with col2:
+            st.subheader("🪐 Planetary Degrees")
+            st.table(pd.DataFrame(planet_results))
+            
+    except Exception as e:
+        st.error(f"Something went wrong: {e}")
